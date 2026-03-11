@@ -3,3 +3,4 @@ pynacl
 pycryptodome
 argon2-cffi
 fusepy
+customtkinter

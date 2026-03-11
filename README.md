@@ -1,84 +1,76 @@
-# SecureDrive Passport
+# SecureDrive
 
-![SecureDrive System Diagram](Image.png)
+**SecureDrive** transforms an ordinary USB drive into a **Zero-Trust Physical Key** with on-the-fly hardware-backed encryption. It features a modern, Apple-inspired graphical interface built with `CustomTkinter`.
 
-**SecureDrive** transforms an ordinary USB drive into a **Zero-Trust Physical Key** with on-the-fly hardware-backed encryption.
+## Features
 
-## How It Works (The Absolute Shortest Explanation)
+- **Anti-Cloning (The ID Check):** The USB signs a random challenge with its secret Ed25519 key to prove it is the physical original, not a clone.
+- **Key Unwrapping (The Password):** Your password is run through Argon2id (memory-hard, GPU resistant) to securely unlock the hidden AES-EAX Master Key.
+- **On-the-Fly Encryption (The Vault):** The FUSE engine uses the Master Key to instantly scramble/unscramble files using AES-CTR as you interact with the File Manager.
+- **Modern GUI Dashboard:** A sleek, fully-featured GUI (`app.py`) for managing your vault.
+- **In-App Provisioning:** Erase, partition, setup, and pair a new blank USB drive directly from the GUI Setup Assistant.
+- **Zero-Data-Loss Password Changes:** Securely rotate your master password. The system unwraps the AES master key and re-encrypts it with a new KEK without touching your stored data.
 
-1. **Anti-Cloning (The ID Check):** The USB signs a random challenge with its secret Ed25519 key to prove it is the physical original, not a clone.
-2. **Key Unwrapping (The Password):** Your password is run through Argon2id (to block supercomputers) to securely unlock the hidden AES Master Key.
-3. **On-the-Fly Encryption (The Vault):** The FUSE engine uses that Master Key to instantly scramble/unscramble files (using AES-CTR) as you drag and drop them.
+## System Architecture
 
-## Technical Architecture & Zero-Trust Workflow
+The architecture operates across distinct security boundaries, orchestrated by `core.py`:
 
-As illustrated in the system diagram above, the SecureDrive architecture operates across four distinct security boundaries:
+**1. Graphical Interface (`app.py`)**
+A macOS-style dashboard providing a visual Hero status view, an interactive File Manager (`/mnt/unlocked_vault`), and seamless password modals. It communicates with the backend daemon via a responsive thread queue.
 
-**1. Userspace (User Application)**
-*   Everyday applications (e.g., File Manager) interact with the vault transparently. They read and write cleartext data (`hello.txt`) to the mounted folder (`/mnt/unlocked_vault`), completely unaware of the underlying cryptographic engine.
+**2. Cryptographic Daemon (`core.py`)**
+The heart of the system orchestrating the security protocol:
+*   **Hardware Authenticator:** A `pyudev` monitor detects drive insertion and initiates a cryptographic handshake, requesting an Ed25519 signature of a random nonce.
+*   **Key Derivation:** Feeds your password into an Argon2id KDF to generate a Key Encryption Key (KEK) which decrypts `vault_header.json` to extract the 256-bit AES Master Key.
+*   **FUSE Encrypted Vault:** The Master Key powers the AES-CTR Crypto Engine (`SecurePassportFS`). It intercepts read/write requests, performing stream encryption before flushing data to the raw USB storage.
 
-**2. Privileged Space (Runtime Daemon: `passport.py`)**
-This is the heart of the system, orchestrating the security protocol in three phases:
-*   **Phase 1: Hardware Authenticator (Anti-Cloning):** A `udev` event interceptor detects the drive insertion. It initiates a challenge-response handshake, sending a random nonce (N) to the USB. The drive must sign this nonce using its hidden Ed25519 private key to prove physical possession against clones.
-*   **Phase 2: Key Derivation & Unwrapping (User Auth):** Your password is fed into a memory-hard Argon2id Key Derivation Function (KDF) to generate a Key Encryption Key (KEK). The Unwrapping Engine uses this KEK to decrypt the `vault_header.json`, securely extracting the 256-bit AES Master Key.
-*   **Phase 3: FUSE Encrypted Vault (Data Protection):** The extracted Master Key powers the AES-CTR Crypto Engine (`_crypt`). It intercepts user read/write requests and performs synchronous, on-the-fly stream encryption before passing data to the FUSE bridge.
+**3. USB Drive Partitioning**
+The drive is partitioned during provisioning:
+*   **Partition 1 (`SDP_BOOT`, FAT32):** Contains the public/private identity keys (`device.cert`, `identity.key`) and the encrypted master key envelope (`vault_header.json`).
+*   **Partition 2 (Data Vault, ext4):** Contains the `encrypted_vault.bin`.
 
-**3. Kernel Space (OS Subsystems)**
-*   The Linux kernel manages the physical hardware connections. The `udev` subsystem handles insertion events, while the Virtual Filesystem (VFS) and FUSE Kernel Module coordinate the sector-aligned reads and writes between the crypto daemon and the raw USB storage.
+## Requirements (Linux)
 
-**4. USB Drive (Physical Storage)**
-The drive itself is deeply segmented into two distinct partitions:
-*   **Partition 1 (`SDP_BOOT`, FAT32):** Contains the public/private identity keys (`device.cert`, `identity.key`) and the encrypted master key envelope (`vault_header.json`). This partition handles the control and authentication logic.
-*   **Partition 2 (Data Vault, /dev/sdX2):** A raw block device containing `encrypted_vault.bin`. Without the passport daemon, this partition contains nothing but cryptographic gibberish.
+You need the FUSE kernel module, `udev`, and system partitioning tools (`parted`, `wipefs`, `mkfs.vfat`, `mkfs.ext4`).
+On Debian/Ubuntu:
+```bash
+sudo apt-get update
+sudo apt-get install libfuse-dev fuse parted util-linux dosfstools
+```
 
-## Repository Structure
-
-*   `passport.py`: The main daemon executing the Privileged Space logic.
-*   `genIDKey.py`: A utility simulating the factory provisioning of the identity keys.
-
-## Prerequisites (Linux)
-
-You will need the following Python libraries. Install them via `pip`:
-
+### Python Dependencies
+Install the required packages using `pip`:
 ```bash
 pip install -r requirements.txt
 ```
 
-You also need the FUSE development headers and a running udev daemon.
-On Debian/Ubuntu:
+*(Requirements include `customtkinter`, `pyudev`, `pynacl`, `pycryptodome`, `argon2-cffi`, and `fusepy`)*
+
+## Usage
+
+**1. Launch the Application**
+SecureDrive requires root privileges for raw device access, FUSE loop mounting, and formatting capabilities. If using a desktop environment like Wayland or X11, you must preserve the environment variables for the GUI to render.
 ```bash
-sudo apt-get install libfuse-dev fuse
+sudo -E python app.py
 ```
 
-## Setup & Usage
+**2. Provision a New Drive**
+*   Click **Provision Drive** in the sidebar.
+*   Select your target USB drive (Warning: All data will be erased).
+*   Set a Secure Master Password.
+*   The system will automatically partition the drive, layout the filesystem, generate the Ed25519 Identity keys, and encrypt the Vault Header.
 
-1.  **Initial Provisioning (Simulation):** 
-    In a real-world scenario, the factory generates the key. For this MVP, run the generation script to create `identity.key` and `device.cert`.
-    ```bash
-    python genIDKey.py
-    ```
-    *Note: These files must be placed on the boot partition of your "SecureDrive" USB.*
+**3. Accessing the Vault**
+*   Remove and re-insert the USB drive.
+*   The Home Dashboard will detect the drive and run the hardware Anti-Cloning check.
+*   Enter your Master Password to unwrap the AES key.
+*   The **File Manager** will open. You can now seamlessly drag-and-drop, create folders, or launch a root terminal directly inside your secure vault.
 
-2.  **Running the Daemon:**
-    Run the `passport.py` script as `root` (required for raw block device access and FUSE mounting).
-    ```bash
-    sudo python passport.py
-    ```
+## Legacy CLI Tools
+The original CLI proof-of-concept scripts have been archived in the `/cli/` directory.
 
-3.  **Operation:**
-    *   Insert your formatted USB Drive (Labelled `SDP_BOOT`).
-    *   The daemon detects the insertion and initiates the Zero-Trust Handshake.
-    *   It verifies the hardware identity (Anti-Cloning).
-    *   You are prompted for your password to unwrap the AES master key.
-    *   Once authenticated, a virtual, encrypted vault is mounted at `/mnt/unlocked_vault`.
-    *   Saving files into `/mnt/unlocked_vault` encrypts them instantly and writes them to the underlying USB drive.
-    *   Removing the drive aggressively tears down the cryptographic boundary and unmounts the FUSE filesystem.
+## Security Disclaimer
+This project is an advanced proof-of-concept demonstrating software-simulated hardware secure elements. 
+The Vault FUSE bridge uses AES-CTR for high-performance stream encryption on arbitrary chunk sizes. The "Factory Root Key" used for identity wrapping is hardcoded for demonstration purposes.
 
-## Security Considerations (MVP Status)
-
-*   This project is a functional MVP simulating hardware secure elements. 
-*   The "Factory Master Key" is hardcoded in the MVP for simplicity and should be protected by a true hardware TPM/Secure Element in production.
-*   The FUSE vault uses AES-CTR for high-performance stream encryption on arbitrary chunk sizes.
-
-## Disclaimer
-This project is for educational and proof-of-concept purposes. 
+*For educational and experimental use.*
