@@ -10,10 +10,31 @@
 2. **Key Unwrapping (The Password):** Your password is run through Argon2id (to block supercomputers) to securely unlock the hidden AES Master Key.
 3. **On-the-Fly Encryption (The Vault):** The FUSE engine uses that Master Key to instantly scramble/unscramble files (using AES-CTR) as you drag and drop them.
 
-## Structure
+## Technical Architecture & Zero-Trust Workflow
 
-*   `passport.py`: The main daemon that listens for USB insertion, handles the Zero-Trust handshake, derives keys, and mounts the FUSE encrypted filesystem.
-*   `genIDKey.py`: A utility to generate the initial Ed25519 identity keypair simulating the factory provisioning of a hardware secure element.
+As illustrated in the system diagram above, the SecureDrive architecture operates across four distinct security boundaries:
+
+**1. Userspace (User Application)**
+*   Everyday applications (e.g., File Manager) interact with the vault transparently. They read and write cleartext data (`hello.txt`) to the mounted folder (`/mnt/unlocked_vault`), completely unaware of the underlying cryptographic engine.
+
+**2. Privileged Space (Runtime Daemon: `passport.py`)**
+This is the heart of the system, orchestrating the security protocol in three phases:
+*   **Phase 1: Hardware Authenticator (Anti-Cloning):** A `udev` event interceptor detects the drive insertion. It initiates a challenge-response handshake, sending a random nonce (N) to the USB. The drive must sign this nonce using its hidden Ed25519 private key to prove physical possession against clones.
+*   **Phase 2: Key Derivation & Unwrapping (User Auth):** Your password is fed into a memory-hard Argon2id Key Derivation Function (KDF) to generate a Key Encryption Key (KEK). The Unwrapping Engine uses this KEK to decrypt the `vault_header.json`, securely extracting the 256-bit AES Master Key.
+*   **Phase 3: FUSE Encrypted Vault (Data Protection):** The extracted Master Key powers the AES-CTR Crypto Engine (`_crypt`). It intercepts user read/write requests and performs synchronous, on-the-fly stream encryption before passing data to the FUSE bridge.
+
+**3. Kernel Space (OS Subsystems)**
+*   The Linux kernel manages the physical hardware connections. The `udev` subsystem handles insertion events, while the Virtual Filesystem (VFS) and FUSE Kernel Module coordinate the sector-aligned reads and writes between the crypto daemon and the raw USB storage.
+
+**4. USB Drive (Physical Storage)**
+The drive itself is deeply segmented into two distinct partitions:
+*   **Partition 1 (`SDP_BOOT`, FAT32):** Contains the public/private identity keys (`device.cert`, `identity.key`) and the encrypted master key envelope (`vault_header.json`). This partition handles the control and authentication logic.
+*   **Partition 2 (Data Vault, /dev/sdX2):** A raw block device containing `encrypted_vault.bin`. Without the passport daemon, this partition contains nothing but cryptographic gibberish.
+
+## Repository Structure
+
+*   `passport.py`: The main daemon executing the Privileged Space logic.
+*   `genIDKey.py`: A utility simulating the factory provisioning of the identity keys.
 
 ## Prerequisites (Linux)
 
