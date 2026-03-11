@@ -1,5 +1,7 @@
 # SecureDrive
 
+![SecureDrive System Diagram](Image.png)
+
 **SecureDrive** transforms an ordinary USB drive into a **Zero-Trust Physical Key** with on-the-fly hardware-backed encryption. It features a modern, Apple-inspired graphical interface built with `CustomTkinter`.
 
 ## Features

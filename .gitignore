@@ -20,7 +20,6 @@ ENV/
 # System Files
 .DS_Store
 Thumbs.db
-Image.png
 
 # User Configs / Local Data
 *.sqlite3
