@@ -1,5 +1,7 @@
 # SecureDrive Passport
 
+![SecureDrive System Diagram](Image.png)
+
 **SecureDrive** transforms an ordinary USB drive into a **Zero-Trust Physical Key** with on-the-fly hardware-backed encryption.
 
 ## How It Works (The Absolute Shortest Explanation)
